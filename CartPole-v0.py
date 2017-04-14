@@ -1,25 +1,23 @@
-#Based on the following tutorial
-#https://medium.com/@awjuliani/super-simple-reinforcement-learning-tutorial-part-2-ded33892c724
 import numpy as np
 import tensorflow as tf
 import gym
 from gym import wrappers
+np.random.seed(1)
+tf.set_random_seed(1)
 env = gym.make('CartPole-v0')
 env = wrappers.Monitor(env, '/tmp/cartpole-experiment-1', force=True)
 
 # hyperparameters
 H = 20 # number of hidden layer neurons
 batch_size = 1 # every how many episodes to do a param update?
-learning_rate = 5e-2 
+learning_rate = 5e-2
 gamma = 0.999 # discount factor for reward
 
 D = 4 # input dimensionality
 
 
 tf.reset_default_graph()
-np.random.seed(1)
-tf.set_random_seed(1)
-#This defines the network as it goes from taking an observation of the environment to a probability of chosing to the action of moving left or right.
+#This defines the network as it goes from taking an observation of the environment to a #probability of chosing to the action of moving left or right.
 observations = tf.placeholder(tf.float32, [None,D] , name="input_x")
 W1 = tf.get_variable("W1", shape=[D, H],
            initializer=tf.contrib.layers.xavier_initializer())
@@ -34,16 +32,17 @@ variables = tf.trainable_variables()
 input_y = tf.placeholder(tf.float32,[None,1], name="input_y")
 advantages = tf.placeholder(tf.float32,name="reward")
 
-# The loss function. This sends the weights in the direction of making actions that gave good advantage (reward over time) more likely, and actions that didn't less likely.
-#loglik = tf.log(input_y*(input_y - probability) + (1 - input_y)*(input_y + probability)) 
-#Instead of the loglik given in the post, I propose the cross entropy
+#The loss function. This sends the weights in the direction of making actions that gave  #good advantage (reward over time) more likely, and actions that didn't less likely.
+#loglik for two class problem
 loglik = input_y*tf.log(probability) + (1 - input_y)*tf.log(1-probability)
-loss = -tf.reduce_mean(loglik * advantages) 
+#advantage weighted loglike, see http://karpathy.github.io/2016/05/31/rl/
+loss = -tf.reduce_mean(loglik * advantages)
 newGrads = tf.gradients(loss,variables)
 
-# Once we have collected a series of gradients from multiple episodes, we apply them.
-adam = tf.train.AdamOptimizer(learning_rate=learning_rate,beta1=0.99, beta2=0.99 ) # Our optimizer, Adam seems to be superior than RMSProp here 
-#rmsprop = tf.train.RMSPropOptimizer(learning_rate=learning_rate, decay=0.99, momentum=0.9, epsilon=1e-6)
+#Once we have collected a series of gradients from multiple episodes, we apply them.
+adam = tf.train.AdamOptimizer(learning_rate=learning_rate,beta1=0.99, beta2=0.99 )
+#Adam seems to be superior than RMSProp here
+#rmsprop = tf.train.RMSPropOptimizer(learning_rate=learning_rate, decay=0.99, #momentum=0.9, epsilon=1e-6)
 W1Grad = tf.placeholder(tf.float32,name="batch_grad1") # Placeholders to send the final gradients through when we update.
 W2Grad = tf.placeholder(tf.float32,name="batch_grad2")
 batchGrad = [W1Grad,W2Grad]
@@ -75,20 +74,21 @@ with tf.Session() as sess:
     sess.run(init)
     observation = env.reset() # Obtain an initial observation of the environment
 
-    # Reset the gradient placeholder. We will collect gradients in gradBuffer until we are ready to update our policy network. 
+    # Reset the gradient placeholder. We will collect gradients in gradBuffer until we
+    # are ready to update our policy network.
     gradBuffer = sess.run(variables)
     for ix,grad in enumerate(gradBuffer):
         gradBuffer[ix] = grad * 0
-    
+
     while episode_number <= total_episodes:
-            
+
         # Make sure the observation is in a shape the network can handle.
         x = np.reshape(observation,[1,D])
-        
-        # Run the policy network and get an action to take. 
+
+        # Run the policy network and get an action to take.
         tfprob = sess.run(probability,feed_dict={observations: x})
         action = 1 if np.random.uniform() < tfprob else 0
-        
+
         xs.append(x) # observation
         y = 1 if action == 1 else 0 # a "fake label"
         ys.append(y)
@@ -97,11 +97,13 @@ with tf.Session() as sess:
         observation, reward, done, info = env.step(action)
         reward_sum += reward
 
-        drs.append(reward) # record reward (has to be done after we call step() to get reward for previous action)
+        drs.append(reward) # record reward (has to be done after we call step()
+        #to get reward for previous action)
 
-        if done: 
+        if done:
             episode_number += 1
-            # stack together all inputs, hidden states, action gradients, and rewards for this episode
+            # stack together all inputs, hidden states, action gradients,
+            # and rewards for this episode
             epx = np.vstack(xs)
             epy = np.vstack(ys)
             epr = np.vstack(drs)
@@ -113,29 +115,29 @@ with tf.Session() as sess:
             # center and scale the rewards to be unit normal (helps control the gradient estimator variance)
             discounted_epr -= np.mean(discounted_epr)
             discounted_epr /= np.std(discounted_epr)
-            
+
             # Get the gradient for this episode, and save it in the gradBuffer
             tGrad = sess.run(newGrads,feed_dict={observations: epx, input_y: epy, advantages: discounted_epr})
             for ix,grad in enumerate(tGrad):
                 gradBuffer[ix] += grad
-                
+
             # If we have completed enough episodes, then update the policy network with our gradients.
-            if episode_number % batch_size == 0: 
+            if episode_number % batch_size == 0:
                 sess.run(updateGrads,feed_dict={W1Grad: gradBuffer[0],W2Grad:gradBuffer[1]})
                 for ix,grad in enumerate(gradBuffer):
                     gradBuffer[ix] = grad * 0
-                
+
                 # Give a summary of how well our network is doing for each batch of episodes.
                 running_reward = reward_sum if running_reward is None else running_reward * 0.99 + reward_sum * 0.01
                 print ('Average reward for episode %f.  Total average reward %f.' % (reward_sum/batch_size, running_reward/batch_size))
-                
-                if running_reward/batch_size > 192: 
+
+                if running_reward/batch_size > 192:
                     print ("Task solved in",episode_number,'episodes!')
                     break
-                    
+
                 reward_sum = 0
-            
+
             observation = env.reset()
-        
+
 print (episode_number,'Episodes completed.')
 env.close()
